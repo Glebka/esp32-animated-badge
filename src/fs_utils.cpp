@@ -26,7 +26,7 @@ esp_err_t init_fs()
   return ESP_OK;
 }
 
-static fs::FS &get_media_fs()
+fs::FS &get_media_fs()
 {
 #if USE_LITTLEFS
   return LittleFS;
