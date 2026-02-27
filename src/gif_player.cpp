@@ -1,5 +1,7 @@
 #include <AnimatedGIF.h>
 #include <stddef.h>
+#include <string.h>
+#include <Arduino.h>
 #include "gif_player.hpp"
 #include "gif_utils.hpp"
 #include <PNGdec.h>
@@ -10,12 +12,20 @@ static AnimatedGIF _gif;
 static uint8_t *_pTurboBuffer;
 static uint8_t *_pFrameBuffer;
 static int _iOffX, _iOffY;
+static BB_SPI_LCD _statusBar;
+static uint8_t *_pStatusBarBuffer;
+static BB_SPI_LCD _restoreBar;
+static uint8_t *_pRestoreBarBuffer;
+static bool _statusBarVisible;
+static uint32_t _statusBarShownAtMs;
 
 static PNG pd;
 const int OV_WIDTH = 96;
 const int OV_HEIGHT = 40;
 const int OV_X = 240, OV_Y = 8;
 static uint8_t *_pOvBuffer;
+static constexpr int STATUS_BAR_HEIGHT = OV_HEIGHT + OV_Y * 2;
+static constexpr uint32_t STATUS_BAR_TIMEOUT_MS = 5000;
 
 const char *TAG = "GIF_PLAYER";
 
@@ -28,71 +38,119 @@ extern "C"
 static const uint8_t *_pBatteryPng = _binary_assets_icons_battery_png_start;
 static const size_t _batteryPngSize = (size_t)(_binary_assets_icons_battery_png_end - _binary_assets_icons_battery_png_start);
 
+static esp_err_t prepare_status_bar()
+{
+    const int screenWidth = _pLcd->width();
+    const int barHeight = STATUS_BAR_HEIGHT;
+    if (_statusBar.createVirtual(screenWidth, barHeight, nullptr, true) == 0)
+    {
+        return ESP_ERR_NO_MEM;
+    }
+
+    if (_restoreBar.createVirtual(screenWidth, barHeight, nullptr, true) == 0)
+    {
+        return ESP_ERR_NO_MEM;
+    }
+
+    constexpr uint16_t barColor565 = 0;//0x8410;
+
+    _statusBar.fillRect(0, 0, screenWidth, barHeight, barColor565, DRAW_TO_RAM);
+
+    constexpr uint8_t barR5 = (uint8_t)(barColor565 >> 11);
+    constexpr uint8_t barG6 = (uint8_t)((barColor565 >> 5) & 0x3F);
+    constexpr uint8_t barB5 = (uint8_t)(barColor565 & 0x1F);
+
+    for (int y = 0; y < OV_HEIGHT; ++y)
+    {
+        const int dstY = OV_Y + y;
+        if (dstY < 0 || dstY >= barHeight)
+        {
+            continue;
+        }
+
+        for (int x = 0; x < OV_WIDTH; ++x)
+        {
+            const int dstX = OV_X + x;
+            if (dstX < 0 || dstX >= screenWidth)
+            {
+                continue;
+            }
+
+            const uint8_t *ovPx = &_pOvBuffer[(y * OV_WIDTH + x) * 4];
+            const uint8_t ovR = ovPx[0];
+            const uint8_t ovG = ovPx[1];
+            const uint8_t ovB = ovPx[2];
+            const uint8_t ovA = ovPx[3];
+
+            if (ovA == 0)
+            {
+                continue;
+            }
+
+            uint8_t outR5;
+            uint8_t outG6;
+            uint8_t outB5;
+
+            if (ovA == 255)
+            {
+                outR5 = ovR >> 3;
+                outG6 = ovG >> 2;
+                outB5 = ovB >> 3;
+            }
+            else
+            {
+                const uint8_t ovR5 = ovR >> 3;
+                const uint8_t ovG6 = ovG >> 2;
+                const uint8_t ovB5 = ovB >> 3;
+                const uint16_t invA = 255 - ovA;
+
+                outR5 = (uint8_t)((barR5 * invA + ovR5 * ovA + 127) / 255);
+                outG6 = (uint8_t)((barG6 * invA + ovG6 * ovA + 127) / 255);
+                outB5 = (uint8_t)((barB5 * invA + ovB5 * ovA + 127) / 255);
+            }
+
+            const uint16_t out565 = (uint16_t)((outR5 << 11) | (outG6 << 5) | outB5);
+            _statusBar.drawPixel(dstX, dstY, out565, DRAW_TO_RAM);
+        }
+    }
+
+    _pStatusBarBuffer = (uint8_t *)_statusBar.getBuffer();
+    _pRestoreBarBuffer = (uint8_t *)_restoreBar.getBuffer();
+    if (!_pStatusBarBuffer || !_pRestoreBarBuffer)
+    {
+        return ESP_FAIL;
+    }
+    memset(_pRestoreBarBuffer, 0, (size_t)screenWidth * (size_t)barHeight * 2);
+    return ESP_OK;
+}
+
 static void GIFDraw(GIFDRAW *pDraw)
 {
     const int drawX = _iOffX + pDraw->iX;
     const int drawY = _iOffY + pDraw->iY + pDraw->y;
+    const int barHeight = STATUS_BAR_HEIGHT;
 
-    if (drawY >= OV_Y && drawY < (OV_Y + OV_HEIGHT))
+    if ((_pStatusBarBuffer || _pRestoreBarBuffer) && drawY >= 0 && drawY < barHeight)
     {
         const int lineStart = drawX;
         const int lineEnd = drawX + pDraw->iWidth;
-        const int ovStart = (lineStart > OV_X) ? lineStart : OV_X;
-        const int ovEnd = (lineEnd < (OV_X + OV_WIDTH)) ? lineEnd : (OV_X + OV_WIDTH);
+        const int copyStart = (lineStart > 0) ? lineStart : 0;
+        const int copyEnd = (lineEnd < _pLcd->width()) ? lineEnd : _pLcd->width();
 
-        if (ovStart < ovEnd)
+        if (copyStart < copyEnd)
         {
-            const int ovY = drawY - OV_Y;
-            uint8_t *linePixels = pDraw->pPixels;
+            const int dstOffsetBytes = (copyStart - lineStart) * 2;
+            const int srcOffsetBytes = (drawY * _pLcd->width() + copyStart) * 2;
+            const int copyBytes = (copyEnd - copyStart) * 2;
 
-            for (int x = ovStart; x < ovEnd; ++x)
+            if (_statusBarVisible && _pRestoreBarBuffer)
             {
-                const int linePixelIndex = x - lineStart;
-                uint8_t *gifPx = &linePixels[linePixelIndex * 2];
+                memcpy(&_pRestoreBarBuffer[srcOffsetBytes], &pDraw->pPixels[dstOffsetBytes], copyBytes);
+            }
 
-                const uint8_t gifHi = gifPx[0];
-                const uint8_t gifLo = gifPx[1];
-                const uint8_t gifR5 = gifHi >> 3;
-                const uint8_t gifG6 = (uint8_t)(((gifHi & 0x07) << 3) | (gifLo >> 5));
-                const uint8_t gifB5 = gifLo & 0x1F;
-
-                const int ovX = x - OV_X;
-                const uint8_t *ovPx = &_pOvBuffer[(ovY * OV_WIDTH + ovX) * 4];
-                const uint8_t ovR = ovPx[0];
-                const uint8_t ovG = ovPx[1];
-                const uint8_t ovB = ovPx[2];
-                const uint8_t ovA = ovPx[3];
-
-                if (ovA == 0)
-                {
-                    continue;
-                }
-
-                uint8_t outR5;
-                uint8_t outG6;
-                uint8_t outB5;
-
-                if (ovA == 255)
-                {
-                    outR5 = ovR >> 3;
-                    outG6 = ovG >> 2;
-                    outB5 = ovB >> 3;
-                }
-                else
-                {
-                    const uint8_t ovR5 = ovR >> 3;
-                    const uint8_t ovG6 = ovG >> 2;
-                    const uint8_t ovB5 = ovB >> 3;
-                    const uint16_t invA = 255 - ovA;
-
-                    outR5 = (uint8_t)((gifR5 * invA + ovR5 * ovA + 127) / 255);
-                    outG6 = (uint8_t)((gifG6 * invA + ovG6 * ovA + 127) / 255);
-                    outB5 = (uint8_t)((gifB5 * invA + ovB5 * ovA + 127) / 255);
-                }
-
-                const uint16_t out565 = (uint16_t)((outR5 << 11) | (outG6 << 5) | outB5);
-                gifPx[0] = (uint8_t)(out565 >> 8);
-                gifPx[1] = (uint8_t)(out565 & 0xFF);
+            if (_statusBarVisible && _pStatusBarBuffer)
+            {
+                memcpy(&pDraw->pPixels[dstOffsetBytes], &_pStatusBarBuffer[srcOffsetBytes], copyBytes);
             }
         }
     }
@@ -133,6 +191,10 @@ esp_err_t gif_player_init(BB_SPI_LCD *lcd)
         ESP_LOGE(TAG, "PNG error code: %d", pd.getLastError());
         return ESP_FAIL;
     }
+    if (prepare_status_bar() != ESP_OK)
+    {
+        return ESP_FAIL;
+    }
     return ESP_OK;
 }
 
@@ -148,11 +210,22 @@ esp_err_t gif_player_open_file(const char *filename)
     _gif.setTurboBuf(_pTurboBuffer);
     _iOffX = (_pLcd->width() - _gif.getCanvasWidth()) / 2;
     _iOffY = (_pLcd->height() - _gif.getCanvasHeight()) / 2;
+    _statusBarVisible = true;
+    _statusBarShownAtMs = millis();
     return ESP_OK;
 }
 
 player_result_t gif_player_render_frame(bool loop)
 {
+    if (_statusBarVisible && (uint32_t)(millis() - _statusBarShownAtMs) >= STATUS_BAR_TIMEOUT_MS)
+    {
+        if (_pRestoreBarBuffer)
+        {
+            _pLcd->drawSprite(0, 0, &_restoreBar, 1.0f, 0xffffffff, DRAW_TO_LCD | DRAW_WITH_DMA);
+        }
+        _statusBarVisible = false;
+    }
+
     int res = _gif.playFrame(true, NULL);
     if (res == PLAYER_OK_EOF && loop)
     {
