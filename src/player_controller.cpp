@@ -1,6 +1,9 @@
 #include <Arduino.h>
 #include <FreeRTOS.h>
+#include <esp_timer.h>
 #include "player_controller.hpp"
+#include "playlist_utils.hpp"
+#include "fs_utils.hpp"
 #include "hw_config.hpp"
 
 static player_mode_t _currentMode = PLAYER_MODE_MANUAL;
@@ -14,6 +17,41 @@ static bool buttonState = HIGH;
 static bool lastButtonReading = HIGH;
 static unsigned long lastButtonChangeMs = 0;
 static volatile bool buttonPressed = false;
+static esp_timer_handle_t _playlistDelayTimer = nullptr;
+
+static void PlaylistDelayTimerCallback(void *arg)
+{
+    if (_playerEventGroup != NULL)
+    {
+        xEventGroupSetBits(_playerEventGroup, PL_PLAYBACK_INT_BIT);
+    }
+}
+
+static void stop_playlist_delay_timer()
+{
+    if (_playlistDelayTimer != nullptr)
+    {
+        esp_timer_stop(_playlistDelayTimer);
+    }
+}
+
+static void start_playlist_delay_timer(uint16_t delay_s)
+{
+    if (_playlistDelayTimer == nullptr)
+    {
+        return;
+    }
+
+    esp_timer_stop(_playlistDelayTimer);
+
+    if (delay_s == 0)
+    {
+        return;
+    }
+
+    const uint64_t delay_us = static_cast<uint64_t>(delay_s) * 1000000ULL;
+    esp_timer_start_once(_playlistDelayTimer, delay_us);
+}
 
 static void MonitorButtonTask(void *pvParameters)
 {
@@ -82,16 +120,24 @@ static void PlayerControllerTask(void *pvParameters)
             portMAX_DELAY);
         if (eventBits & PL_BTN_LONG_PRESS_BIT)
         {
+            stop_playlist_delay_timer();
             _currentMode = (player_mode_t)((_currentMode + 1) % PLAYER_MODE_SZ_COUNT);
             if (_currentMode == PLAYER_MODE_PLAYLIST)
             {
-                xEventGroupSetBits(_playerEventGroup, PL_PLAYBACK_MODE_CHANGED_BIT | PL_PLAYBACK_INT_BIT);
+                if (has_playlist_file() && open_playlist_file() == ESP_OK) {
+                    xEventGroupSetBits(_playerEventGroup, PL_PLAYBACK_MODE_CHANGED_BIT | PL_PLAYBACK_INT_BIT);
+                } else {
+                    _currentMode = PLAYER_MODE_MANUAL;
+                }
+                
             } else {
+                close_playlist_file();
                 xEventGroupSetBits(_playerEventGroup, PL_PLAYBACK_MODE_CHANGED_BIT);
             }
         }
         if (eventBits & PL_BTN_CLICK_BIT)
         {
+            stop_playlist_delay_timer();
             xEventGroupSetBits(_playerEventGroup, PL_PLAYBACK_INT_BIT);
         }
     }
@@ -106,6 +152,18 @@ esp_err_t init_player_controller()
 
     _playerEventGroup = xEventGroupCreate();
     if (_playerEventGroup == NULL)
+    {
+        return ESP_FAIL;
+    }
+
+    esp_timer_create_args_t timer_args = {
+        .callback = &PlaylistDelayTimerCallback,
+        .arg = nullptr,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "playlist_delay"
+    };
+
+    if (esp_timer_create(&timer_args, &_playlistDelayTimer) != ESP_OK)
     {
         return ESP_FAIL;
     }
@@ -150,4 +208,25 @@ EventGroupHandle_t get_player_event_group()
 player_mode_t get_current_player_mode()
 {
     return _currentMode;
+}
+
+esp_err_t player_get_next_file(char *out_path, size_t out_path_size) {
+    static uint16_t playlist_delay_s = 0;
+    stop_playlist_delay_timer();
+    if (_currentMode == PLAYER_MODE_PLAYLIST) {
+        playlist_result_t res = get_next_playlist_entry(out_path, out_path_size, &playlist_delay_s);
+        if (res != PLAYLIST_RESULT_ERROR && playlist_delay_s > 0) {
+            start_playlist_delay_timer(playlist_delay_s);
+        }
+        if (res == PLAYLIST_OK_CONTINUE) {
+            return ESP_OK;
+        } else if (res == PLAYLIST_OK_EOF) {
+            reset_playlist_file();
+            return ESP_OK;
+        } else {
+            return ESP_FAIL;
+        }
+     } else {
+         return find_next_supported_file(out_path, out_path_size);
+     }
 }

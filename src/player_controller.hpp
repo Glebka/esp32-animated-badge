@@ -24,3 +24,4 @@ enum player_event_bits_t {
 esp_err_t init_player_controller();
 EventGroupHandle_t get_player_event_group();
 player_mode_t get_current_player_mode();
+esp_err_t player_get_next_file(char *out_path, size_t out_path_size);

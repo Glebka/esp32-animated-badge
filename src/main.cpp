@@ -59,6 +59,7 @@ void setup()
   lcd.begin(DISPLAY_WS_AMOLED_18);
   lcd.allocBuffer();
   lcd.fillScreen(TFT_BLACK);
+  //lcd.setBrightness(128);
 
   if (gif_player_init(&lcd) != ESP_OK) {
     Serial.println("Failed to initialize GIF player!");
@@ -83,7 +84,7 @@ void setup()
 void loop()
 {
   _currentPlayerMode = get_current_player_mode();
-  esp_err_t res = find_next_supported_file(filename_buffer, sizeof(filename_buffer));
+  esp_err_t res = player_get_next_file(filename_buffer, sizeof(filename_buffer));
   if (res != ESP_OK)
   {
     Serial.println("No supported files found!");

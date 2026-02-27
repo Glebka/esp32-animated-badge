@@ -50,8 +50,10 @@ playlist_result_t get_next_playlist_entry(char *filename_buffer, size_t buffer_s
     }
 
     String line = _playlistFile.readStringUntil('\n');
+    bool eof = _playlistFile.position() >= _playlistFile.size();
+
     if (line.length() == 0) {
-        return PLAYLIST_OK_EOF;
+        return PLAYLIST_RESULT_ERROR;
     }
 
     int separator_index = line.indexOf(' ');
@@ -61,8 +63,10 @@ playlist_result_t get_next_playlist_entry(char *filename_buffer, size_t buffer_s
             return PLAYLIST_RESULT_ERROR;
         }
         line.toCharArray(filename_buffer, buffer_size);
-        *delay_s = 0;
-        return PLAYLIST_OK_CONTINUE;
+        if (delay_s != NULL) {
+            *delay_s = 0;
+        }
+        return eof ? PLAYLIST_OK_EOF : PLAYLIST_OK_CONTINUE;
     }
 
     String filename_part = line.substring(0, separator_index);
@@ -76,7 +80,9 @@ playlist_result_t get_next_playlist_entry(char *filename_buffer, size_t buffer_s
     }
 
     filename_part.toCharArray(filename_buffer, buffer_size);
-    *delay_s = (uint16_t)delay_part.toInt();
+    if (delay_s != NULL) {
+        *delay_s = (uint16_t)delay_part.toInt();
+    }
 
-    return PLAYLIST_OK_CONTINUE;
+    return eof ? PLAYLIST_OK_EOF : PLAYLIST_OK_CONTINUE;
 }
