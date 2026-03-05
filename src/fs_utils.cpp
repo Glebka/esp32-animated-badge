@@ -173,3 +173,8 @@ esp_err_t find_next_supported_file(char *out_path, size_t out_path_size)
   dir.close();
   return ESP_ERR_NOT_FOUND;
 }
+
+esp_err_t reset_next_supported_file_iterator() {
+    s_next_supported_index = 0;
+    return ESP_OK;
+}

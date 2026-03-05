@@ -5,6 +5,7 @@
 #include "playlist_utils.hpp"
 #include "fs_utils.hpp"
 #include "hw_config.hpp"
+#include "status_bar.hpp"
 
 static player_mode_t _currentMode = PLAYER_MODE_MANUAL;
 TaskHandle_t _playerControllerTaskHandle = NULL;
@@ -129,11 +130,13 @@ static void PlayerControllerTask(void *pvParameters)
                 } else {
                     _currentMode = PLAYER_MODE_MANUAL;
                 }
-                
             } else {
                 close_playlist_file();
                 xEventGroupSetBits(_playerEventGroup, PL_PLAYBACK_MODE_CHANGED_BIT);
             }
+            reset_next_supported_file_iterator();
+            status_bar_update_player_mode(_currentMode);
+            status_bar_show();
         }
         if (eventBits & PL_BTN_CLICK_BIT)
         {
@@ -175,7 +178,7 @@ esp_err_t init_player_controller()
         NULL,                         // Task input parameter
         tskIDLE_PRIORITY + 1,         // Priority of the task
         &_playerControllerTaskHandle, // Task handle
-        0                             // Core to run the task on
+        1                             // Core to run the task on
     );
 
     if (result != pdPASS)
@@ -190,7 +193,7 @@ esp_err_t init_player_controller()
         NULL,                     /* Task input parameter */
         1,                        /* Priority of the task */
         &MonitorButtonTaskHandle, /* Task handle. */
-        0);                       /* Core where the task should run */
+        1);                       /* Core where the task should run */
 
     if (result != pdPASS)
     {

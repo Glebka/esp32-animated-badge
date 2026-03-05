@@ -17,6 +17,8 @@
 #include "jpeg_player.hpp"
 #include "png_player.hpp"
 #include "player_controller.hpp"
+#include "battery_status.hpp"
+#include "status_bar.hpp"
 
 BB_SPI_LCD lcd;
 
@@ -35,7 +37,7 @@ void setup()
 {
   Serial.begin(115200);
   delay(3000);
-
+  
   if (init_fs() != ESP_OK) {
     Serial.println("Failed to initialize filesystem!");
     while (1)
@@ -56,6 +58,21 @@ void setup()
   }
   _playerEventGroup = get_player_event_group();
   _currentPlayerMode = get_current_player_mode();
+
+  if (init_status_bar() != ESP_OK) {
+    Serial.println("Failed to initialize status bar!");
+    while (1)
+    {
+    };
+  }
+
+  if (init_battery_status() != ESP_OK) {
+    Serial.println("Failed to initialize battery status!");
+    while (1)
+    {
+    };
+  }
+
   lcd.begin(DISPLAY_WS_AMOLED_18);
   lcd.allocBuffer();
   lcd.fillScreen(TFT_BLACK);
@@ -79,6 +96,7 @@ void setup()
     {
     };
   }
+  status_bar_show();
 }
 
 void loop()
@@ -105,6 +123,7 @@ void loop()
   bool loop = (_currentPlayerMode == PLAYER_MODE_MANUAL) || file_type == FILE_TYPE_PNG;
   player_t *player = &players[file_type];
   Serial.printf("Opening file: %s\n", filename_buffer);
+
   while (1)
   { 
     lcd.fillScreen(TFT_BLACK);
