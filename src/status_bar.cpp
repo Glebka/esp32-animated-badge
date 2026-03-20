@@ -42,9 +42,11 @@ static uint8_t *_pStatusBarSpriteBuffer = NULL;
 static BB_SPI_LCD _restoreBarSprite;
 static uint8_t *_pRestoreBarSpriteBuffer = NULL;
 static SemaphoreHandle_t _statusBarSpriteMutex = NULL;
-static bool _statusBarVisible = false;
-static uint32_t _statusBarShownAtMs = 0;
-static bool _statusBarNeedsFirstRender = true;
+static volatile bool _statusBarVisible = false;
+static volatile uint32_t _statusBarShownAtMs = 0;
+static bool _statusBarVisibleForFrame = false;
+static uint16_t *_pOverlayLineBuf[2] = {NULL, NULL};
+static int _overlayBufIdx = 0;
 
 const char *TAG = "STATUS_BAR";
 
@@ -221,7 +223,7 @@ static esp_err_t redraw_status_bar_widget()
     return ESP_OK;
 }
 
-esp_err_t status_bar_draw_callback(void* lcd, int x, int y, int width, uint16_t* pixels) {
+uint16_t* status_bar_draw_callback(void* lcd, int x, int y, int width, uint16_t* pixels) {
 
     if ((_pStatusBarSpriteBuffer || _pRestoreBarSpriteBuffer) && y >= 0 && y < STATUS_BAR_HEIGHT)
     {
@@ -232,54 +234,71 @@ esp_err_t status_bar_draw_callback(void* lcd, int x, int y, int width, uint16_t*
 
         if (copyStart < copyEnd)
         {
-            const int dstOffsetBytes = (copyStart - lineStart) * 2;
+            const int dstOffset = copyStart - lineStart;
             const int srcOffsetBytes = (y * LCD_WIDTH + copyStart) * 2;
             const int copyBytes = (copyEnd - copyStart) * 2;
 
             if (_pRestoreBarSpriteBuffer)
             {
-                memcpy(&_pRestoreBarSpriteBuffer[srcOffsetBytes], &pixels[dstOffsetBytes], copyBytes);
+                memcpy(&_pRestoreBarSpriteBuffer[srcOffsetBytes], &pixels[dstOffset], copyBytes);
             }
 
-            if (_statusBarVisible && _pStatusBarSpriteBuffer)
+            if (_statusBarVisibleForFrame && _pStatusBarSpriteBuffer
+                && _pOverlayLineBuf[0] && width <= LCD_WIDTH)
             {
+                // Wait for any in-flight DMA to finish before reusing the overlay buffer
+                if (lcd) ((BB_SPI_LCD *)lcd)->waitDMA();
+
+                _overlayBufIdx ^= 1;
+                uint16_t *overlayBuf = _pOverlayLineBuf[_overlayBufIdx];
+
+                memcpy(overlayBuf, pixels, width * sizeof(uint16_t));
+
                 if (!lock_status_bar_sprite())
                 {
-                    return ESP_FAIL;
+                    return pixels;
                 }
-                memcpy(&pixels[dstOffsetBytes], &_pStatusBarSpriteBuffer[srcOffsetBytes], copyBytes);
+                memcpy(&overlayBuf[dstOffset], &_pStatusBarSpriteBuffer[srcOffsetBytes], copyBytes);
                 unlock_status_bar_sprite();
+
+                return overlayBuf;
             }
         }
     }
-    return ESP_OK;
+    return pixels;
 }
 
-esp_err_t status_bar_pre_frame_render_callback(void* lcd) {
+esp_err_t status_bar_pre_frame_render_callback(void* lcd, bool activelyDecoding) {
 
-    if (_statusBarVisible && _statusBarNeedsFirstRender)
-    {
-        if (!lock_status_bar_sprite())
-        {
-            return ESP_FAIL;
-        }
-        ((BB_SPI_LCD *)lcd)->waitDMA();
-        ((BB_SPI_LCD *)lcd)->drawSprite(0, 0, &_statusBarSprite, 1.0f, 0xffffffff, DRAW_TO_LCD | DRAW_WITH_DMA);
-        ((BB_SPI_LCD *)lcd)->waitDMA();
-        unlock_status_bar_sprite();
-        _statusBarNeedsFirstRender = false;
-    }
+    // Ensure previous frame's last DMA is complete before decoder writes new frame
+    ((BB_SPI_LCD *)lcd)->waitDMA();
+
     if (_statusBarVisible && (uint32_t)(millis() - _statusBarShownAtMs) >= STATUS_BAR_TIMEOUT_MS)
     {
-        if (_pRestoreBarSpriteBuffer)
+        // For static images, restore the original pixels before clearing visibility
+        if (!activelyDecoding && _pRestoreBarSpriteBuffer)
         {
-            ((BB_SPI_LCD *)lcd)->waitDMA();
             ((BB_SPI_LCD *)lcd)->drawSprite(0, 0, &_restoreBarSprite, 1.0f, 0xffffffff, DRAW_TO_LCD | DRAW_WITH_DMA);
             ((BB_SPI_LCD *)lcd)->waitDMA();
         }
         _statusBarVisible = false;
-        _statusBarNeedsFirstRender = false;
     }
+
+    // For static images, draw the status bar sprite directly since no per-line
+    // callbacks will follow
+    if (!activelyDecoding && _statusBarVisible && _pStatusBarSpriteBuffer)
+    {
+        if (lock_status_bar_sprite())
+        {
+            ((BB_SPI_LCD *)lcd)->drawSprite(0, 0, &_statusBarSprite, 1.0f, 0xffffffff, DRAW_TO_LCD | DRAW_WITH_DMA);
+            ((BB_SPI_LCD *)lcd)->waitDMA();
+            unlock_status_bar_sprite();
+        }
+    }
+
+    // Snapshot visibility for this frame so all scanlines in draw_callback
+    // see a consistent value — prevents partial overlay if show() is called mid-frame
+    _statusBarVisibleForFrame = _statusBarVisible;
     return ESP_OK;
 }
 
@@ -346,7 +365,15 @@ static esp_err_t init_sprites()
         return ESP_FAIL;
     }
     memset(_pRestoreBarSpriteBuffer, 0, (size_t)LCD_WIDTH * (size_t)STATUS_BAR_HEIGHT * 2);
-    //redraw_status_bar_widget();
+
+    _pOverlayLineBuf[0] = (uint16_t *)heap_caps_malloc(LCD_WIDTH * sizeof(uint16_t), MALLOC_CAP_8BIT);
+    _pOverlayLineBuf[1] = (uint16_t *)heap_caps_malloc(LCD_WIDTH * sizeof(uint16_t), MALLOC_CAP_8BIT);
+    if (!_pOverlayLineBuf[0] || !_pOverlayLineBuf[1])
+    {
+        ESP_LOGE(TAG, "Failed to allocate overlay line buffers");
+        unlock_status_bar_sprite();
+        return ESP_ERR_NO_MEM;
+    }
 
     unlock_status_bar_sprite();
     return ESP_OK;
@@ -378,14 +405,12 @@ esp_err_t status_bar_update_battery_info(bool is_charging, uint8_t battery_level
     statusBar.isCharging = is_charging;
     statusBar.batteryLevelPercent = battery_level_percent;
     redraw_status_bar_widget();
-    _statusBarNeedsFirstRender = true;
     return ESP_OK;
 }
 
 esp_err_t status_bar_update_player_mode(player_mode_t mode) {
     statusBar.currentPlayerMode = mode;
     redraw_status_bar_widget();
-    _statusBarNeedsFirstRender = true;
     return ESP_OK;
 }
 
@@ -393,6 +418,5 @@ esp_err_t status_bar_show() {
     statusBar.isVisible = true;
     _statusBarShownAtMs = millis();
     _statusBarVisible = true;
-    _statusBarNeedsFirstRender = true;
     return ESP_OK;
 }

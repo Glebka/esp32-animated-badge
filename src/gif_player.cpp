@@ -22,14 +22,14 @@ static void GIFDraw(GIFDRAW *pDraw)
     const int drawX = _iOffX + pDraw->iX;
     const int drawY = _iOffY + pDraw->iY + pDraw->y;
 
-    status_bar_draw_callback(_pLcd, drawX, drawY, pDraw->iWidth, (uint16_t *)pDraw->pPixels);
+    uint16_t *sendPixels = status_bar_draw_callback(_pLcd, drawX, drawY, pDraw->iWidth, (uint16_t *)pDraw->pPixels);
 
     if (pDraw->y == 0)
     {
         _pLcd->setAddrWindow(_iOffX + pDraw->iX, _iOffY + pDraw->iY, pDraw->iWidth, pDraw->iHeight);
     }
 
-    _pLcd->pushPixels((uint16_t *)pDraw->pPixels, pDraw->iWidth, DRAW_TO_LCD | DRAW_WITH_DMA);
+    _pLcd->pushPixels(sendPixels, pDraw->iWidth, DRAW_TO_LCD | DRAW_WITH_DMA);
 }
 
 esp_err_t gif_player_init(BB_SPI_LCD *lcd)
@@ -64,7 +64,7 @@ esp_err_t gif_player_open_file(const char *filename)
 
 player_result_t gif_player_render_frame(bool loop)
 {
-    status_bar_pre_frame_render_callback(_pLcd);
+    status_bar_pre_frame_render_callback(_pLcd, true);
     int res = _gif.playFrame(true, NULL);
     if (res == PLAYER_OK_EOF && loop)
     {

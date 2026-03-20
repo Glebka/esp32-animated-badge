@@ -46,7 +46,7 @@ static int32_t pngSeek(PNGFILE *handle, int32_t position)
 int PNGDraw(PNGDRAW *pDraw)
 {
     _png.getLineAsRGB565(pDraw, usPixels, PNG_RGB565_BIG_ENDIAN, 0); // get help converting to RGB565
-    status_bar_draw_callback(NULL, xoff, yoff + pDraw->y, pDraw->iWidth, (uint16_t *)usPixels);
+    uint16_t *sendPixels = status_bar_draw_callback(_pLcd, xoff, yoff + pDraw->y, pDraw->iWidth, (uint16_t *)usPixels);
     if (pDraw->y == 0)
     {
         // set the address window when we get the first line
@@ -56,7 +56,7 @@ int PNGDraw(PNGDRAW *pDraw)
     // DMA buffer, **BUT** in this case, the PNG decoding plus the pixel conversion takes a long time
     // relative to sending pixels to the display. If the display were a REALLY slow one, then it would be
     // prodent to use a dual (ping-pong) buffer scheme to avoid that risk.
-    _pLcd->pushPixels(usPixels, pDraw->iWidth, DRAW_TO_LCD | DRAW_WITH_DMA);
+    _pLcd->pushPixels(sendPixels, pDraw->iWidth, DRAW_TO_LCD | DRAW_WITH_DMA);
     return 1;
 }
 
@@ -86,7 +86,7 @@ esp_err_t png_player_open_file(const char *filename)
 
 player_result_t png_player_render_frame(bool loop)
 {
-    status_bar_pre_frame_render_callback(_pLcd);
+    status_bar_pre_frame_render_callback(_pLcd, !_rendered);
     if (_rendered || _png.decode(NULL, PNG_FAST_PALETTE) == 0)
     {
         vTaskDelay(1);
