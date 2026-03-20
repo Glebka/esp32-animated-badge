@@ -321,9 +321,9 @@ esp_err_t status_bar_pre_frame_render_callback(void* lcd, bool activelyDecoding)
     {
         statusBar.isVisible = false;
     }
-    ((BB_SPI_LCD *)lcd)->waitDMA();
     if (statusBar.redrawNeeded)
     {
+        ((BB_SPI_LCD *)lcd)->waitDMA();
         redraw_status_bar_widget();
         statusBar.redrawNeeded = false;
     }
@@ -331,6 +331,7 @@ esp_err_t status_bar_pre_frame_render_callback(void* lcd, bool activelyDecoding)
     {
         statusBar.isVisibleForFrame = true;
         if (!activelyDecoding) {
+            ((BB_SPI_LCD *)lcd)->waitDMA(); 
             ((BB_SPI_LCD *)lcd)->drawSprite(0, 0, &_statusBarSprite, 1.0f, -1, DRAW_TO_LCD | DRAW_WITH_DMA);
             ((BB_SPI_LCD *)lcd)->waitDMA(); 
         }
@@ -339,6 +340,7 @@ esp_err_t status_bar_pre_frame_render_callback(void* lcd, bool activelyDecoding)
     {
         statusBar.isVisibleForFrame = false;
         if (!activelyDecoding) {
+            ((BB_SPI_LCD *)lcd)->waitDMA(); 
             ((BB_SPI_LCD *)lcd)->drawSprite(0, 0, &_restoreBarSprite, 1.0f, -1, DRAW_TO_LCD | DRAW_WITH_DMA);
             ((BB_SPI_LCD *)lcd)->waitDMA();
         }
