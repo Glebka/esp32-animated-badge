@@ -40,7 +40,12 @@ static esp_err_t update_battery_status_bar(bool show_status_bar) {
         status_bar_show();
     }
 
-    ESP_LOGI(TAG, "Battery update: charging=%s, level=%u%%", is_charging ? "Yes" : "No", battery_percent);
+    const uint16_t currTable[] = {
+        0, 0, 0, 0, 100, 125, 150, 175, 200, 300, 400, 500, 600, 700, 800, 900, 1000
+    };
+    uint8_t val = power.getChargerConstantCurr();
+
+    ESP_LOGI(TAG, "Battery update: charging=%d, level=%u%%, voltage=%umV", power.isCharging(), battery_percent, power.getBattVoltage());
     return ESP_OK;
 }
 
@@ -118,21 +123,40 @@ esp_err_t init_battery_status() {
     power.enableInterrupt(XPOWERS_USB_INSERT_INT | XPOWERS_USB_REMOVE_INT | XPOWERS_CHARGE_START_INT | XPOWERS_CHARGE_DONE_INT | XPOWERS_PWR_BTN_CLICK_INT | XPOWERS_PWR_BTN_LONGPRESSED_INT);
     power.setIrqLevelTime(XPOWERS_AXP2101_IRQ_TIME_2S);
     power.setChargeTargetVoltage(XPOWERS_AXP2101_CHG_VOL_4V2);
+    power.setVbusVoltageLimit(XPOWERS_AXP2101_VBUS_VOL_LIM_4V36);
+    power.setVbusCurrentLimit(XPOWERS_AXP2101_VBUS_CUR_LIM_1500MA);
+    power.setSysPowerDownVoltage(2600);
+    power.disableTSPinMeasure();
     power.setPowerKeyPressOffTime(XPOWERS_POWEROFF_4S);
     power.setPowerKeyPressOnTime(XPOWERS_POWERON_1S);
     power.clearIrqStatus();
 
     power.enableBattDetection();
+    power.enableVbusVoltageMeasure();
     power.enableBattVoltageMeasure();
+    power.enableSystemVoltageMeasure();
+    power.disableWatchdog();
+
+    power.setPrechargeCurr(XPOWERS_AXP2101_PRECHARGE_75MA);
+    power.setChargerTerminationCurr(XPOWERS_AXP2101_CHG_ITERM_25MA);
+
+    power.setLowBatWarnThreshold(10);
+    power.setLowBatShutdownThreshold(5);
+
+    uint8_t charging_current_setting = XPOWERS_AXP2101_CHG_CUR_150MA;
+#if defined(HIGHER_CHARGE_CURRENT)
+    charging_current_setting = XPOWERS_AXP2101_CHG_CUR_500MA;
+#endif
+    
+    if (!power.setChargerConstantCurr(charging_current_setting)) {
+        ESP_LOGE(TAG, "Failed to set charger constant current");
+        return ESP_FAIL;
+    }
 
     ESP_LOGI(TAG, "Battery connected: %s", power.isBatteryConnect() ? "Yes" : "No");
     ESP_LOGI(TAG, "Battery charging: %s", power.isCharging() ? "Yes" : "No");
     ESP_LOGI(TAG, "Battery voltage: %.2f V", power.getBattVoltage());
     ESP_LOGI(TAG, "Battery percent: %d %%", power.getBatteryPercent());
-
-    power.disableBattDetection();
-    power.disableBattVoltageMeasure();
-    power.disableWatchdog();
 
     update_battery_status_bar(false);
 
