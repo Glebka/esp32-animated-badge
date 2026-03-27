@@ -23,7 +23,6 @@ struct player_t {
 
 enum supported_file_type_t {
     FILE_TYPE_GIF,
-    // FILE_TYPE_JPEG,
     FILE_TYPE_PNG,
     FILE_TYPE_SZ_COUNT
 };

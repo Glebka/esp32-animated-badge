@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <FreeRTOS.h>
 #include <esp_timer.h>
+
 #include "player_controller.hpp"
 #include "playlist_utils.hpp"
 #include "fs_utils.hpp"
@@ -125,12 +126,17 @@ static void PlayerControllerTask(void *pvParameters)
             _currentMode = (player_mode_t)((_currentMode + 1) % PLAYER_MODE_SZ_COUNT);
             if (_currentMode == PLAYER_MODE_PLAYLIST)
             {
-                if (has_playlist_file() && open_playlist_file() == ESP_OK) {
+                if (has_playlist_file() && open_playlist_file() == ESP_OK)
+                {
                     xEventGroupSetBits(_playerEventGroup, PL_PLAYBACK_MODE_CHANGED_BIT | PL_PLAYBACK_INT_BIT);
-                } else {
+                }
+                else
+                {
                     _currentMode = PLAYER_MODE_MANUAL;
                 }
-            } else {
+            }
+            else
+            {
                 close_playlist_file();
                 xEventGroupSetBits(_playerEventGroup, PL_PLAYBACK_MODE_CHANGED_BIT);
             }
@@ -163,8 +169,7 @@ esp_err_t init_player_controller()
         .callback = &PlaylistDelayTimerCallback,
         .arg = nullptr,
         .dispatch_method = ESP_TIMER_TASK,
-        .name = "playlist_delay"
-    };
+        .name = "playlist_delay"};
 
     if (esp_timer_create(&timer_args, &_playlistDelayTimer) != ESP_OK)
     {
@@ -172,14 +177,13 @@ esp_err_t init_player_controller()
     }
 
     BaseType_t result = xTaskCreatePinnedToCore(
-        PlayerControllerTask,         // Task function
-        "PlayerControllerTask",       // Name of the task
-        4096,                         // Stack size in words
-        NULL,                         // Task input parameter
-        tskIDLE_PRIORITY + 1,         // Priority of the task
-        &_playerControllerTaskHandle, // Task handle
-        1                             // Core to run the task on
-    );
+        PlayerControllerTask,
+        "PlayerControllerTask",
+        4096,
+        NULL,
+        tskIDLE_PRIORITY + 1,
+        &_playerControllerTaskHandle,
+        1);
 
     if (result != pdPASS)
     {
@@ -187,13 +191,13 @@ esp_err_t init_player_controller()
     }
 
     result = xTaskCreatePinnedToCore(
-        MonitorButtonTask,        /* Function to implement the task */
-        "MonitorButtonTask",      /* Name of the task */
-        2048,                     /* Stack size in words (around 8KB in bytes for ESP32S3) */
-        NULL,                     /* Task input parameter */
-        1,                        /* Priority of the task */
-        &MonitorButtonTaskHandle, /* Task handle. */
-        1);                       /* Core where the task should run */
+        MonitorButtonTask,
+        "MonitorButtonTask",
+        2048,
+        NULL,
+        1,
+        &MonitorButtonTaskHandle,
+        1);
 
     if (result != pdPASS)
     {
@@ -213,23 +217,33 @@ player_mode_t get_current_player_mode()
     return _currentMode;
 }
 
-esp_err_t player_get_next_file(char *out_path, size_t out_path_size) {
+esp_err_t player_get_next_file(char *out_path, size_t out_path_size)
+{
     static uint16_t playlist_delay_s = 0;
     stop_playlist_delay_timer();
-    if (_currentMode == PLAYER_MODE_PLAYLIST) {
+    if (_currentMode == PLAYER_MODE_PLAYLIST)
+    {
         playlist_result_t res = get_next_playlist_entry(out_path, out_path_size, &playlist_delay_s);
-        if (res != PLAYLIST_RESULT_ERROR && playlist_delay_s > 0) {
+        if (res != PLAYLIST_RESULT_ERROR && playlist_delay_s > 0)
+        {
             start_playlist_delay_timer(playlist_delay_s);
         }
-        if (res == PLAYLIST_OK_CONTINUE) {
+        if (res == PLAYLIST_OK_CONTINUE)
+        {
             return ESP_OK;
-        } else if (res == PLAYLIST_OK_EOF) {
+        }
+        else if (res == PLAYLIST_OK_EOF)
+        {
             reset_playlist_file();
             return ESP_OK;
-        } else {
+        }
+        else
+        {
             return ESP_FAIL;
         }
-     } else {
-         return find_next_supported_file(out_path, out_path_size);
-     }
+    }
+    else
+    {
+        return find_next_supported_file(out_path, out_path_size);
+    }
 }

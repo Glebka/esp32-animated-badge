@@ -1,17 +1,16 @@
 #include "hw_config.hpp"
 
-#include <esp_log.h>
-
 #include <Arduino.h>
 #include <Wire.h>
 #include <esp_timer.h>
+#include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 #include <Adafruit_XCA9554.h>
 #include <XPowersLib.h>
-#include "status_bar.hpp"
 
+#include "status_bar.hpp"
 #include "battery_status.hpp"
 
 static const char *TAG = "BatteryStatus";
@@ -40,9 +39,6 @@ static esp_err_t update_battery_status_bar(bool show_status_bar) {
         status_bar_show();
     }
 
-    const uint16_t currTable[] = {
-        0, 0, 0, 0, 100, 125, 150, 175, 200, 300, 400, 500, 600, 700, 800, 900, 1000
-    };
     uint8_t val = power.getChargerConstantCurr();
 
     ESP_LOGI(TAG, "Battery update: charging=%d, level=%u%%, voltage=%umV", power.isCharging(), battery_percent, power.getBattVoltage());
