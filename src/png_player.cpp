@@ -1,16 +1,11 @@
 #include "hw_config.hpp"
-
 #define PNG_MAX_BUFFERED_PIXELS ((LCD_WIDTH*4 + 1)*2)
-
-#include <PNGdec.h>
-#include "png_player.hpp"
-#include "FS.h"
-#if USE_LITTLEFS
-#include <LittleFS.h>
-#else
+#include <FS.h>
 #include <SD_MMC.h>
-#endif
-#include "gif_utils.hpp"
+#include <PNGdec.h>
+
+#include "png_player.hpp"
+#include "fs_utils.hpp"
 #include "status_bar.hpp"
 
 static BB_SPI_LCD *_pLcd;
@@ -72,7 +67,7 @@ esp_err_t png_player_init(BB_SPI_LCD *lcd)
 
 esp_err_t png_player_open_file(const char *filename)
 {
-    int rc = _png.open(filename, gifOpenSD, gifClose, pngRead, pngSeek, PNGDraw);
+    int rc = _png.open(filename, fopen_callback, fclose_callback, pngRead, pngSeek, PNGDraw);
     if (rc != PNG_SUCCESS)
     {
         Serial.printf("PNG error: %d\n", rc);

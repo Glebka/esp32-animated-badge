@@ -1,20 +1,14 @@
 #if defined(ARDUINO_ARCH_ESP32) && !defined(BOARD_HAS_PSRAM)
 #error "Please enable PSRAM support"
 #endif
-#ifndef USE_LITTLEFS
-#define USE_LITTLEFS 0
-#endif
 #include <Arduino.h>
-#include "FS.h"
-#include <bb_spi_lcd.h>
 #include <FreeRTOS.h>
+#include <FS.h>
+#include <bb_spi_lcd.h>
 
 #include "hw_config.hpp"
 #include "fs_utils.hpp"
-#include "gif_utils.hpp"
-//#include "btn_control.hpp"
 #include "gif_player.hpp"
-#include "jpeg_player.hpp"
 #include "png_player.hpp"
 #include "player_controller.hpp"
 #include "battery_status.hpp"
@@ -29,7 +23,6 @@ static player_mode_t _currentPlayerMode = PLAYER_MODE_MANUAL;
 
 player_t players[FILE_TYPE_SZ_COUNT] = {
     {gif_player_init, gif_player_open_file, gif_player_render_frame, gif_player_close_file},
-    // {jpeg_player_init, jpeg_player_open_file, jpeg_player_render_frame, jpeg_player_close_file},
     {png_player_init, png_player_open_file, png_player_render_frame, png_player_close_file}
 };
 
@@ -44,12 +37,6 @@ void setup()
     {
     };
   }
-  // if (init_button_control() != ESP_OK) {
-  //   Serial.println("Failed to initialize button control!");
-  //   while (1)
-  //   {
-  //   };
-  // }
   if (init_player_controller() != ESP_OK) {
     Serial.println("Failed to initialize player controller!");
     while (1)
@@ -76,7 +63,6 @@ void setup()
   lcd.begin(DISPLAY_WS_AMOLED_18);
   lcd.allocBuffer();
   lcd.fillScreen(TFT_BLACK);
-  //lcd.setBrightness(128);
 
   if (gif_player_init(&lcd) != ESP_OK) {
     Serial.println("Failed to initialize GIF player!");
@@ -84,12 +70,6 @@ void setup()
     {
     };
   }
-  // if (jpeg_player_init(&lcd) != ESP_OK) {
-  //   Serial.println("Failed to initialize JPEG player!");
-  //   while (1)
-  //   {
-  //   };
-  // }
   if(png_player_init(&lcd) != ESP_OK) {
     Serial.println("Failed to initialize PNG player!");
     while (1)

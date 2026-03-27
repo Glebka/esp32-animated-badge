@@ -1,0 +1,5 @@
+/02lu.gif
+/01lu.gif
+/p03.png 5
+/p04.png 5
+/04lu.gif

@@ -1,9 +1,6 @@
 #include <FS.h>
-#if USE_LITTLEFS
-    #include <LittleFS.h>
-#else
-    #include <SD_MMC.h>
-#endif
+#include <SD_MMC.h>
+
 #include "hw_config.hpp"
 #include "fs_utils.hpp"
 
@@ -11,28 +8,12 @@ static const char *FILESYSTEM_ROOT_PATH = "/";
 
 esp_err_t init_fs()
 {
-#if USE_LITTLEFS
-  if (!LittleFS.begin(false))
-  {
-    return ESP_FAIL;
-  }
-#else
   SD_MMC.setPins(SDMMC_CLK, SDMMC_CMD, SDMMC_DATA);
   if (!SD_MMC.begin("/sdcard", true))
   {
     return ESP_FAIL;
   }
-#endif
   return ESP_OK;
-}
-
-fs::FS &get_media_fs()
-{
-#if USE_LITTLEFS
-  return LittleFS;
-#else
-  return SD_MMC;
-#endif
 }
 
 static size_t s_next_supported_index = 0;
@@ -56,9 +37,7 @@ bool has_supported_extension(const char *name)
   lower_ext[i] = '\0';
 
   return (strcmp(lower_ext, "gif") == 0) ||
-        //  (strcmp(lower_ext, "jpg") == 0) ||
-         (strcmp(lower_ext, "png") == 0);// ||
-        //  (strcmp(lower_ext, "jpeg") == 0);
+         (strcmp(lower_ext, "png") == 0);
 }
 
 supported_file_type_t get_file_type(const char *name)
@@ -83,10 +62,6 @@ supported_file_type_t get_file_type(const char *name)
   {
     return FILE_TYPE_GIF;
   }
-  // else if ((strcmp(lower_ext, "jpg") == 0) || (strcmp(lower_ext, "jpeg") == 0))
-  // {
-  //   return FILE_TYPE_JPEG;
-  // }
   else if (strcmp(lower_ext, "png") == 0)
   {
     return FILE_TYPE_PNG;
@@ -104,8 +79,7 @@ esp_err_t find_next_supported_file(char *out_path, size_t out_path_size)
     return ESP_ERR_INVALID_ARG;
   }
 
-  fs::FS &filesystem = get_media_fs();
-  File dir = filesystem.open(FILESYSTEM_ROOT_PATH);
+  File dir = SD_MMC.open(FILESYSTEM_ROOT_PATH);
   if (!dir || !dir.isDirectory())
   {
     return ESP_ERR_NOT_FOUND;
@@ -177,4 +151,23 @@ esp_err_t find_next_supported_file(char *out_path, size_t out_path_size)
 esp_err_t reset_next_supported_file_iterator() {
     s_next_supported_index = 0;
     return ESP_OK;
+}
+
+void* fopen_callback(const char *filename, int32_t *size) {
+    static File fileInstance;
+    fileInstance = SD_MMC.open(filename);
+    if (fileInstance)
+    {
+        *size = fileInstance.size();
+        return &fileInstance;
+    }
+    return NULL;
+}
+
+void fclose_callback(void *file) {
+    File *pFile = (File *)file;
+    if (pFile)
+    {
+        pFile->close();
+    }
 }

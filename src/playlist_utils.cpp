@@ -1,4 +1,5 @@
 #include <FS.h>
+#include <SD_MMC.h>
 #include "playlist_utils.hpp"
 #include "fs_utils.hpp"
 
@@ -6,8 +7,7 @@
 static File _playlistFile;
 
 bool has_playlist_file() {
-    fs::FS &filesystem = get_media_fs();
-    File file = filesystem.open("/playlist.txt");
+    File file = SD_MMC.open("/playlist.txt");
     bool exists = file && !file.isDirectory();
     file.close();
     return exists;
@@ -17,8 +17,7 @@ esp_err_t open_playlist_file() {
     if (_playlistFile) {
         return ESP_ERR_INVALID_STATE;
     }
-    fs::FS &filesystem = get_media_fs();
-    _playlistFile = filesystem.open("/playlist.txt");
+    _playlistFile = SD_MMC.open("/playlist.txt");
     if (!_playlistFile || _playlistFile.isDirectory()) {
         return ESP_ERR_NOT_FOUND;
     }
