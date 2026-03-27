@@ -3,6 +3,7 @@
 #endif
 #include <Arduino.h>
 #include <FreeRTOS.h>
+#include <esp_log.h>
 #include <FS.h>
 #include <bb_spi_lcd.h>
 
@@ -13,6 +14,7 @@
 #include "player_controller.hpp"
 #include "battery_status.hpp"
 #include "status_bar.hpp"
+#include "watchdog.hpp"
 
 BB_SPI_LCD lcd;
 
@@ -26,19 +28,35 @@ player_t players[FILE_TYPE_SZ_COUNT] = {
     {png_player_init, png_player_open_file, png_player_render_frame, png_player_close_file}
 };
 
+static const char *TAG = "MAIN";
+
+static void draw_error_message(const char *message, int yOffset = 0) {
+    BB_RECT rect;
+    lcd.setFont(FONT_12x16);
+    lcd.setCursor(0, 0);
+    lcd.getStringBox(message, &rect);
+    lcd.setCursor(LCD_WIDTH / 2 - rect.w / 2 - 10, LCD_HEIGHT / 2 - rect.h / 2 + yOffset);
+    lcd.setTextColor(TFT_RED);
+    lcd.print(message);
+}
+
 void setup()
 {
-  Serial.begin(115200);
-  delay(3000);
-  
-  if (init_fs() != ESP_OK) {
-    Serial.println("Failed to initialize filesystem!");
-    while (1)
-    {
-    };
+  lcd.begin(DISPLAY_WS_AMOLED_18);
+  lcd.allocBuffer();
+  lcd.fillScreen(TFT_BLACK);
+  while (init_fs() != ESP_OK)
+  {
+    ESP_LOGE(TAG, "Failed to initialize filesystem!");
+    draw_error_message("SD Card not found", -15);
+    draw_error_message("Please insert SD", 15);
+    delay(1000);
   }
+  
   if (init_player_controller() != ESP_OK) {
-    Serial.println("Failed to initialize player controller!");
+    ESP_LOGE(TAG, "Failed to initialize player controller!");
+    draw_error_message("Unexpected error", -15);
+    draw_error_message("E_PLAYER_CONTROLLER", 15);
     while (1)
     {
     };
@@ -47,62 +65,80 @@ void setup()
   _currentPlayerMode = get_current_player_mode();
 
   if (init_status_bar() != ESP_OK) {
-    Serial.println("Failed to initialize status bar!");
+    ESP_LOGE(TAG, "Failed to initialize status bar!");
+    draw_error_message("Unexpected error", -15);
+    draw_error_message("E_STATUS_BAR", 15);
     while (1)
     {
     };
   }
 
   if (init_battery_status() != ESP_OK) {
-    Serial.println("Failed to initialize battery status!");
+    ESP_LOGE(TAG, "Failed to initialize battery status!");
+    draw_error_message("Unexpected error", -15);
+    draw_error_message("E_BATTERY_STATUS", 15);
     while (1)
     {
     };
   }
 
-  lcd.begin(DISPLAY_WS_AMOLED_18);
-  lcd.allocBuffer();
-  lcd.fillScreen(TFT_BLACK);
-
   if (gif_player_init(&lcd) != ESP_OK) {
-    Serial.println("Failed to initialize GIF player!");
+    ESP_LOGE(TAG, "Failed to initialize GIF player!");
+    draw_error_message("Unexpected error", -15);
+    draw_error_message("E_GIF_PLAYER", 15);
     while (1)
     {
     };
   }
   if(png_player_init(&lcd) != ESP_OK) {
-    Serial.println("Failed to initialize PNG player!");
+    ESP_LOGE(TAG, "Failed to initialize PNG player!");
+    draw_error_message("Unexpected error", -15);
+    draw_error_message("E_PNG_PLAYER", 15);
     while (1)
     {
     };
   }
+
+  if (init_watchdog() != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to initialize watchdog!");
+    draw_error_message("Unexpected error", -15);
+    draw_error_message("E_WATCHDOG", 15);
+    while (1)
+    {
+    };
+  }
+
+  lcd.fillScreen(TFT_BLACK);
   status_bar_show();
 }
 
 void loop()
 {
+  watchdog_kick();
   _currentPlayerMode = get_current_player_mode();
   esp_err_t res = player_get_next_file(filename_buffer, sizeof(filename_buffer));
   if (res != ESP_OK)
   {
-    Serial.println("No supported files found!");
+    ESP_LOGE(TAG, "No supported files found!");
+    lcd.fillScreen(TFT_BLACK);
+    draw_error_message("No supported files found");
     while (1) {};
   }
   supported_file_type_t file_type = get_file_type(filename_buffer);
   if (file_type >= FILE_TYPE_SZ_COUNT)
   {
-    Serial.printf("No player for file: %s\n", filename_buffer);
+    ESP_LOGE(TAG, "No player for file: %s", filename_buffer);
     return;
   }
   if (_currentPlayerMode == PLAYER_MODE_AUTO && file_type == FILE_TYPE_PNG)
   {
-    Serial.printf("Skipping PNG file in AUTO mode: %s\n", filename_buffer);
+    ESP_LOGI(TAG, "Skipping PNG file in AUTO mode: %s", filename_buffer);
     xEventGroupSetBits(_playerEventGroup, PL_FILE_DONE_BIT);
     return;
   }
   bool loop = (_currentPlayerMode == PLAYER_MODE_MANUAL) || file_type == FILE_TYPE_PNG;
   player_t *player = &players[file_type];
-  Serial.printf("Opening file: %s\n", filename_buffer);
+  ESP_LOGI(TAG, "Opening file: %s", filename_buffer);
 
   while (1)
   { 
@@ -111,6 +147,7 @@ void loop()
     {
       while (player->render_frame(loop) == PLAYER_OK_CONTINUE)
       {
+        watchdog_kick();
         _playerEventBits = xEventGroupGetBits(_playerEventGroup);
         if (_playerEventBits & PL_PLAYBACK_MODE_CHANGED_BIT)
         {
@@ -122,19 +159,19 @@ void loop()
         {
           xEventGroupClearBits(_playerEventGroup, PL_PLAYBACK_INT_BIT);
           player->close_file();
-          Serial.println("Next file requested, breaking out of frame loop...");
+          ESP_LOGI(TAG, "Next file requested, breaking out of frame loop...");
           return;
         }
       }
-      Serial.println("File finished, closing...");
+      ESP_LOGI(TAG, "File finished, closing...");
       player->close_file();
       xEventGroupSetBits(_playerEventGroup, PL_FILE_DONE_BIT);
       if (!loop) {
-        Serial.println("Not looping, breaking out of file loop...");
+        ESP_LOGI(TAG, "Not looping, breaking out of file loop...");
         return;
       }
     } else {
-      Serial.printf("Failed to open file: %s\n", filename_buffer);
+      ESP_LOGE(TAG, "Failed to open file: %s", filename_buffer);
       return;
     }
   }

@@ -1,5 +1,7 @@
 #include "hw_config.hpp"
 #define PNG_MAX_BUFFERED_PIXELS ((LCD_WIDTH*4 + 1)*2)
+#include <Arduino.h>
+#include <esp_log.h>
 #include <FS.h>
 #include <SD_MMC.h>
 #include <PNGdec.h>
@@ -13,9 +15,9 @@ static PNG _png;
 static bool _rendered = false;
 static int w, h, xoff, yoff;
 static uint16_t usPixels[LCD_WIDTH];
+static const char *TAG = "PNG_PLAYER";
 
-
-static int32_t pngRead(PNGFILE *handle, uint8_t *buffer, int32_t length)
+static int32_t png_fread_callback(PNGFILE *handle, uint8_t *buffer, int32_t length)
 {
     int32_t iBytesRead;
     iBytesRead = length;
@@ -30,7 +32,7 @@ static int32_t pngRead(PNGFILE *handle, uint8_t *buffer, int32_t length)
     return iBytesRead;
 }
 
-static int32_t pngSeek(PNGFILE *handle, int32_t position)
+static int32_t png_fseek_callback(PNGFILE *handle, int32_t position)
 {
     File *f = static_cast<File *>(handle->fHandle);
     f->seek(position);
@@ -38,7 +40,7 @@ static int32_t pngSeek(PNGFILE *handle, int32_t position)
     return handle->iPos;
 }
 
-int PNGDraw(PNGDRAW *pDraw)
+int png_draw_callback(PNGDRAW *pDraw)
 {
     _png.getLineAsRGB565(pDraw, usPixels, PNG_RGB565_BIG_ENDIAN, 0); // get help converting to RGB565
     uint16_t *sendPixels = status_bar_draw_callback(_pLcd, xoff, yoff + pDraw->y, pDraw->iWidth, (uint16_t *)usPixels);
@@ -67,14 +69,14 @@ esp_err_t png_player_init(BB_SPI_LCD *lcd)
 
 esp_err_t png_player_open_file(const char *filename)
 {
-    int rc = _png.open(filename, fopen_callback, fclose_callback, pngRead, pngSeek, PNGDraw);
+    int rc = _png.open(filename, fopen_callback, fclose_callback, png_fread_callback, png_fseek_callback, png_draw_callback);
     if (rc != PNG_SUCCESS)
     {
-        Serial.printf("PNG error: %d\n", rc);
-        Serial.printf("Failed to open PNG: %s\n", filename);
+        ESP_LOGE(TAG, "PNG error: %d", rc);
+        ESP_LOGE(TAG, "Failed to open PNG: %s", filename);
         return ESP_FAIL;
     }
-    Serial.printf("Successfully opened PNG; Canvas size = %d x %d\n", _png.getWidth(), _png.getHeight());
+    ESP_LOGI(TAG, "Successfully opened PNG; Canvas size = %d x %d", _png.getWidth(), _png.getHeight());
     _rendered = false;
     return ESP_OK;
 }
@@ -90,8 +92,8 @@ player_result_t png_player_render_frame(bool loop)
     }
     if (_png.getLastError() > 0)
     {
-        Serial.println("PNG decoding error!");
-        Serial.printf("PNG error code: %d\n", _png.getLastError());
+        ESP_LOGE(TAG, "PNG decoding error!");
+        ESP_LOGE(TAG, "PNG error code: %d", _png.getLastError());
         return PLAYER_OK_EOF;
     }
     return PLAYER_ERROR;
