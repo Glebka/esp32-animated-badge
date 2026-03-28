@@ -46,6 +46,15 @@ pio run -e waveshare-esp32-s3-touch-amoled-18 -t upload
 pio device monitor -b 115200
 ```
 
+## Flash pre-built release firmware
+
+1. Go to [Releases](https://github.com/your-repo/releases) and download the latest `xxx-firmware-merged.bin`.
+2. Go to online flasher tool [Espresso Flash](https://espressoflash.com/)
+3. Select ESP32-S3, connect your device to the computer holding the BOOT button
+4. Click "Connect" and wait for the device to be detected
+5. On "Configure Firmware & Flash Settings" step, select "Upload local files" and select "Bootloader" tab and then upload `xxx-firmware-merged.bin` from the release assets, then click "Continue" and "Flash" to start flashing the firmware
+6. Flashing may take a few minutes, once done power cycle the device and it should boot into the badge firmware
+
 ## SD Card Content
 
 Put media files at the SD card root, for example:
