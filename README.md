@@ -4,10 +4,9 @@ ESP32-S3 firmware for a wearable LCD badge that plays GIF/PNG media from an SD c
 
 The project is built with PlatformIO + Arduino framework and uses BitBank display/decoder libraries for efficient rendering.
 
-<video controls width="600">
-    <source src="assets/cropped-demo.mp4" type="video/mp4">
-    Your browser does not support the video tag.
-</video>
+<img src="assets/demo.png" alt="Demo Image" width="600">
+
+See [demo video](assets/cropped-demo.mp4).
 
 ## Features
 
