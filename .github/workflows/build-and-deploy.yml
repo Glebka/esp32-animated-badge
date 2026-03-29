@@ -13,6 +13,9 @@ on:
         required: false
         default: 'master'
 
+permissions:
+  contents: write
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
@@ -58,5 +61,3 @@ jobs:
           draft: true
           files: |
             .pio/build/*/*-merged.bin
-        env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
